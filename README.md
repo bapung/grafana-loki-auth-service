@@ -1,0 +1,116 @@
+# Grafana Loki Auth Service
+
+An auth service for Grafana Loki that validates client credentials and permissions. My goal is to create a simple auth service (especially for NGINX) to enable multi-tenancy authentication and authorization in Grafana Loki.
+
+## Features
+
+- Basic authentication verification
+- API key (TODO: Bearer)
+- Client permission check: Query, Ingest, GetStatus, Delete
+- SQLite database storage with in-memory caching (TODO: support other db)
+- API to manage users (TODO)
+
+## Credential Storage
+
+This service uses PBKDF2 with SHA-256 for secure credential storage. Instead of storing plaintext API keys and passwords, the system stores a hash of the credentials along with a salt.
+
+### Generating Secure Credentials
+
+You can use the included hash generator tool to create secure credential hashes:
+
+```bash
+go run cmd/hash-generator/main.go -plaintext="your-secret-password"
+```
+
+This will output a hash and salt that you can use in the YAML configuration file.
+
+### Example YAML with Secure Credentials
+
+```yaml
+clients:
+  - id: "client1-uuid"
+    org_id: client1
+    basic_auth_user_hash: "6e5d4c3b2a1..."
+    basic_auth_user_salt: "f6e5d4c3b2a1..."
+    basic_auth_pass_hash: "1a2b3c4d5e6f..."
+    basic_auth_pass_salt: "6f5e4d3c2b1a..."
+    allowed_actions:
+      - Query
+      - GetStatus
+```
+
+### Alternative: Using Plaintext in YAML (will be automatically hashed)
+
+You can also provide plaintext credentials in the YAML file. The service will automatically hash them when loading:
+
+```yaml
+clients:
+  - id: "client1-uuid"
+    org_id: client1
+    basic_auth_user: "username"  # Will be hashed on load
+    basic_auth_pass: "password"  # Will be hashed on load
+    allowed_actions:
+      - Query
+      - GetStatus
+```
+
+Note: When using plaintext credentials in YAML, they will be hashed upon first load and stored securely in the database.
+
+## Database Setup
+
+Initialize the database schema:
+
+```bash
+go run db_migrate.go --db=./clients.db
+```
+
+## Usage
+
+### Building the Service
+
+```bash
+go build -o auth-service .
+```
+
+### Running the Service
+
+```bash
+./auth-service
+```
+
+By default, the service runs on port 8000 and uses a SQLite database at `./clients.db`.
+You can change these defaults with environment variables:
+
+```bash
+PORT=9000 DB_PATH=/path/to/clients.db ./auth-service
+```
+
+### Docker Build
+
+```bash
+docker build -t auth-service:latest .
+```
+
+### Making Requests
+
+Example valid request:
+
+```bash
+export LOKI_ADDR=https://my-loki-addr.tld
+export LOKI_USERNAME=client1
+export LOKI_PASSWORD=password1
+logcli query --since=5m --org-id=tenant1 '{namespace="somens"} |= ""' 
+
+```
+
+## Kubernetes Deployment
+
+Deploy the service and NGINX ingress using:
+
+```bash
+kubectl apply -f k8s/nginx-ingress.yaml
+```
+
+## Client Management
+
+Clients are stored in a SQLite database and cached in memory for performance.

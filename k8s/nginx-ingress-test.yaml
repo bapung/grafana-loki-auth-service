@@ -1,0 +1,215 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: auth-service
+  namespace: grafana-loki-staging
+spec:
+  ports:
+  - port: 8000
+    targetPort: 8000
+  selector:
+    app: auth-service
+---
+# Secret containing the authorized clients YAML
+apiVersion: v1
+kind: Secret
+metadata:
+  name: auth-service-clients
+  namespace: grafana-loki-staging
+type: Opaque
+stringData:
+  authorized_clients.yaml: |
+    # Default authorized clients configuration
+    clients:
+      # Client 1 example with plaintext credentials (will be hashed on load)
+      - id: "client1-uuid"
+        org_id: tenant1
+        basic_auth_user: "client1"
+        basic_auth_pass: "password1"
+        allowed_actions:
+          - Query
+          - GetStatus
+      
+      # Client 2 example with pre-hashed credentials
+      - id: "client2-uuid"
+        org_id: tenant2
+        basic_auth_user_hash: "c775e7b757ede630cd0aa1113bd102661ab38829ca52a6422ab782862f268646"
+        basic_auth_user_salt: "1234567890abcdef"
+        basic_auth_pass_hash: "8c6976e5b5410415bde908bd4dee15dfb167a9c873fc4bb8a81f6f2ab448a918"
+        basic_auth_pass_salt: "0000000000000000"
+        allowed_actions:
+          - Ingest
+          - Query
+        
+      # Client 3 example with both org_id same as client1 but different credentials
+      - id: "client3-uuid"
+        org_id: tenant1
+        basic_auth_user: "client1_alt"
+        basic_auth_pass: "password1_alt"
+        allowed_actions:
+          - GetStatus
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: auth-service
+  namespace: grafana-loki-staging
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: auth-service
+  template:
+    metadata:
+      labels:
+        app: auth-service
+    spec:
+      containers:
+      - name: auth-service
+        image: bagaspurwas/loki-auth-service:dev-007
+        ports:
+        - containerPort: 8000
+        env:
+        - name: LOKI_PATH_PREFIX
+          value: "/loki"
+        - name: CLIENTS_YAML_PATH
+          value: "/root/authorized_clients.yaml"
+        volumeMounts:
+        - name: clients-config
+          mountPath: "/root/authorized_clients.yaml"
+          subPath: authorized_clients.yaml
+      volumes:
+      - name: clients-config
+        secret:
+          secretName: auth-service-clients
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  annotations:
+    nginx.ingress.kubernetes.io/proxy-body-size: "0"
+    nginx.ingress.kubernetes.io/proxy-connect-timeout: "120"
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "600"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "600"
+    nginx.ingress.kubernetes.io/auth-url: "http://auth-service.grafana-loki-staging.svc.cluster.local:8000/validate?path=$request_uri&method=$request_method"
+  labels:
+    app.kubernetes.io/component: gateway
+    app.kubernetes.io/instance: staging
+    app.kubernetes.io/name: loki
+  name: loki-gateway-private-test-auth
+  namespace: grafana-loki-staging
+spec:
+  ingressClassName: nginx-private
+  rules:
+  - host: grafana-loki-gateway-auth-staging.bpg.pw
+    http:
+      paths:
+      - path: /
+        pathType: Exact
+        backend:
+          service:
+            name: loki-read
+            port:
+              number: 3100
+      - path: /api/prom/push
+        pathType: Exact
+        backend:
+          service:
+            name: loki-write
+            port:
+              number: 3100
+      - path: /api/prom/tail
+        pathType: Exact
+        backend:
+          service:
+            name: loki-read
+            port:
+              number: 3100
+      - path: /api/prom/
+        pathType: Prefix
+        backend:
+          service:
+            name: loki-read
+            port:
+              number: 3100
+      - path: /prometheus/api/v1/alerts
+        pathType: Prefix
+        backend:
+          service:
+            name: loki-read
+            port:
+              number: 3100
+      - path: /prometheus/api/v1/rules
+        pathType: Prefix
+        backend:
+          service:
+            name: loki-read
+            port:
+              number: 3100
+      - path: /loki/api/v1/push
+        pathType: Exact
+        backend:
+          service:
+            name: loki-write
+            port:
+              number: 3100
+      - path: /loki/api/v1/tail
+        pathType: Exact
+        backend:
+          service:
+            name: loki-read
+            port:
+              number: 3100
+      - path: /loki/api/
+        pathType: Prefix
+        backend:
+          service:
+            name: loki-read
+            port:
+              number: 3100
+      - path: /compactor/
+        pathType: Prefix
+        backend:
+          service:
+            name: loki-backend
+            port:
+              number: 3100
+      - path: /distributor/
+        pathType: Prefix
+        backend:
+          service:
+            name: loki-write
+            port:
+              number: 3100
+      - path: /ring
+        pathType: Prefix
+        backend:
+          service:
+            name: loki-write
+            port:
+              number: 3100
+      - path: /ingester/
+        pathType: Prefix
+        backend:
+          service:
+            name: loki-write
+            port:
+              number: 3100
+      - path: /ruler/
+        pathType: Prefix
+        backend:
+          service:
+            name: loki-backend
+            port:
+              number: 3100
+      - path: /scheduler/
+        pathType: Prefix
+        backend:
+          service:
+            name: loki-backend
+            port:
+              number: 3100
+  tls:
+  - hosts:
+    - grafana-loki-gateway-auth-staging.bpg.pw
+    secretName: bpg-pw-tls

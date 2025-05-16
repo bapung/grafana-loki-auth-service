@@ -1,0 +1,29 @@
+# Default authorized clients configuration
+clients:
+  # Client 1 example with plaintext credentials (will be hashed on load)
+  - id: "client1-tenant-id-1-00001"
+    org_id: test-tenant-id-1
+    basic_auth_user: "client1"
+    basic_auth_pass: "password1"
+    allowed_actions:
+      - Query
+      - GetStatus
+  
+  # Client 2 example with pre-hashed credentials
+  - id: "client2-uuid"
+    org_id: tenant2
+    basic_auth_user_hash: "c775e7b757ede630cd0aa1113bd102661ab38829ca52a6422ab782862f268646"
+    basic_auth_user_salt: "1234567890abcdef"
+    basic_auth_pass_hash: "8c6976e5b5410415bde908bd4dee15dfb167a9c873fc4bb8a81f6f2ab448a918"
+    basic_auth_pass_salt: "0000000000000000"
+    allowed_actions:
+      - Ingest
+      - Query
+    
+  # Client 3 example with both org_id same as client1 but different credentials
+  - id: "client1-tenant-id-1-00003"
+    org_id: test-tenant-id-1
+    basic_auth_user: "client1_alt"
+    basic_auth_pass: "password1_alt"
+    allowed_actions:
+      - GetStatus
