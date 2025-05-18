@@ -64,7 +64,7 @@ func main() {
 	}
 
 	// Check if there are any clients available
-	if len(clientStore.GetClientsByOrgID("")) == 0 {
+	if clientStore.GetClientLength() == 0 {
 		log.Fatalf("No clients found in database or YAML file. Cannot start the service without clients.")
 	}
 

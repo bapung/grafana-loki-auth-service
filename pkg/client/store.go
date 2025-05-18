@@ -216,3 +216,15 @@ func (cs *ClientStore) GetClientByID(id string) (Client, bool) {
 func (cs *ClientStore) Close() error {
 	return cs.db.Close()
 }
+
+func (cs *ClientStore) GetClientLength() int {
+	cs.mu.RLock()
+	defer cs.mu.RUnlock()
+	return len(cs.clientsByID)
+}
+
+func (cs *ClientStore) GetClientByOrgIDLength(orgID string) int {
+	cs.mu.RLock()
+	defer cs.mu.RUnlock()
+	return len(cs.clientsByOrgID[orgID])
+}
