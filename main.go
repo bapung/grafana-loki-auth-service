@@ -10,6 +10,7 @@ import (
 	_ "github.com/mattn/go-sqlite3"
 
 	"github.com/bapung/grafana-loki-auth-service/pkg/action"
+	"github.com/bapung/grafana-loki-auth-service/pkg/admin"
 	"github.com/bapung/grafana-loki-auth-service/pkg/auth"
 	"github.com/bapung/grafana-loki-auth-service/pkg/client"
 	"github.com/bapung/grafana-loki-auth-service/pkg/util"
@@ -95,10 +96,27 @@ func main() {
 		log.Fatalf("No clients found in database or YAML file. Cannot start the service without clients.")
 	}
 
-	// Setup HTTP server
-	http.HandleFunc("/validate", func(w http.ResponseWriter, r *http.Request) {
+	// Get admin API key from environment variable
+	adminAPIKey := os.Getenv("ADMIN_API_KEY")
+	if adminAPIKey == "" {
+		log.Printf("WARNING: Admin API key not set! Admin endpoints will be disabled.")
+	} else {
+		log.Printf("Admin API is enabled and secured with API key")
+	}
+
+	// Create HTTP server mux
+	mux := http.NewServeMux()
+
+	// Register validate endpoint
+	mux.HandleFunc("/validate", func(w http.ResponseWriter, r *http.Request) {
 		validateHandler(w, r, clientStore)
 	})
+
+	// Register admin endpoints if API key is provided
+	if adminAPIKey != "" {
+		adminAPI := admin.NewAPI(clientStore, adminAPIKey)
+		adminAPI.RegisterRoutes(mux)
+	}
 
 	// Get port from environment variable or use default
 	port := os.Getenv("PORT")
@@ -107,7 +125,7 @@ func main() {
 	}
 
 	log.Printf("Starting auth service on port %s...", port)
-	if err := http.ListenAndServe(":"+port, nil); err != nil {
+	if err := http.ListenAndServe(":"+port, mux); err != nil {
 		log.Fatalf("Failed to start server: %v", err)
 	}
 }

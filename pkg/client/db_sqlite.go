@@ -176,3 +176,35 @@ func (p *SQLiteProvider) BeginTx() (*sql.Tx, error) {
 
 	return p.db.Begin()
 }
+
+// DeleteClient deletes a client and its associated actions
+func (p *SQLiteProvider) DeleteClient(clientID string) error {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	// Begin transaction
+	tx, err := p.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if err != nil {
+			tx.Rollback()
+		}
+	}()
+
+	// Delete client actions first due to foreign key constraint
+	_, err = tx.Exec("DELETE FROM client_actions WHERE client_id = ?", clientID)
+	if err != nil {
+		return err
+	}
+
+	// Delete the client
+	_, err = tx.Exec("DELETE FROM clients WHERE id = ?", clientID)
+	if err != nil {
+		return err
+	}
+
+	// Commit transaction
+	return tx.Commit()
+}

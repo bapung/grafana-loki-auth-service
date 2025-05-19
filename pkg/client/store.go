@@ -17,6 +17,7 @@ type DBProvider interface {
 	InsertOrUpdateClient(client Client) error
 	DeleteClientActions(clientID string) error
 	InsertClientAction(clientID, action string) error
+	DeleteClient(clientID string) error
 	BeginTx() (*sql.Tx, error)
 }
 
@@ -169,4 +170,48 @@ func (cs *ClientStore) GetClientByOrgIDLength(orgID string) int {
 	cs.mu.RLock()
 	defer cs.mu.RUnlock()
 	return len(cs.clientsByOrgID[orgID])
+}
+
+// GetAllClients returns all clients in the store
+func (cs *ClientStore) GetAllClients() []Client {
+	cs.mu.RLock()
+	defer cs.mu.RUnlock()
+
+	clients := make([]Client, 0, len(cs.clientsByID))
+	for _, client := range cs.clientsByID {
+		clients = append(clients, client)
+	}
+	return clients
+}
+
+// DeleteClient removes a client from the store and database
+func (cs *ClientStore) DeleteClient(clientID string) error {
+	cs.mu.Lock()
+	defer cs.mu.Unlock()
+
+	// Get the client to find its OrgID
+	client, exists := cs.clientsByID[clientID]
+	if !exists {
+		return fmt.Errorf("client not found: %s", clientID)
+	}
+
+	// Delete from database
+	if err := cs.db.DeleteClient(clientID); err != nil {
+		return err
+	}
+
+	// Delete from clientsByID
+	delete(cs.clientsByID, clientID)
+
+	// Delete from clientsByOrgID
+	orgClients := cs.clientsByOrgID[client.OrgID]
+	for i, c := range orgClients {
+		if c.ID == clientID {
+			// Remove the client at index i
+			cs.clientsByOrgID[client.OrgID] = append(orgClients[:i], orgClients[i+1:]...)
+			break
+		}
+	}
+
+	return nil
 }

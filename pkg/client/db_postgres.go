@@ -184,3 +184,35 @@ func (p *PostgresProvider) BeginTx() (*sql.Tx, error) {
 
 	return p.db.Begin()
 }
+
+// DeleteClient deletes a client and its associated actions
+func (p *PostgresProvider) DeleteClient(clientID string) error {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	// Begin transaction
+	tx, err := p.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if err != nil {
+			tx.Rollback()
+		}
+	}()
+
+	// Delete client actions first due to foreign key constraint
+	_, err = tx.Exec("DELETE FROM client_actions WHERE client_id = $1", clientID)
+	if err != nil {
+		return err
+	}
+
+	// Delete the client
+	_, err = tx.Exec("DELETE FROM clients WHERE id = $1", clientID)
+	if err != nil {
+		return err
+	}
+
+	// Commit transaction
+	return tx.Commit()
+}
