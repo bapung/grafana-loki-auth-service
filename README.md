@@ -7,8 +7,9 @@ An auth service for Grafana Loki that validates client credentials and permissio
 - Basic authentication verification
 - API key (TODO: Bearer)
 - Client permission check: Query, Ingest, GetStatus, Delete
-- SQLite database storage with in-memory caching (TODO: support other db)
-- API to manage users (TODO)
+- Multiple database support: SQLite (default) or PostgreSQL
+- Admin API for client management
+- API to manage users
 
 ## Credential Storage
 
@@ -56,13 +57,42 @@ clients:
 
 Note: When using plaintext credentials in YAML, they will be hashed upon first load and stored securely in the database.
 
-## Database Setup
+## Database Configuration
 
-Initialize the database schema:
+This service supports two types of databases:
+
+### SQLite (Default)
+
+SQLite is used by default and requires minimal configuration:
 
 ```bash
-go run db_migrate.go --db=./clients.db
+# Default SQLite configuration
+./auth-service
+
+# Specify custom database path
+DB_PATH=/path/to/clients.db ./auth-service
 ```
+
+### PostgreSQL
+
+To use PostgreSQL instead of SQLite:
+
+```bash
+# Required environment variables for PostgreSQL
+DB_TYPE=postgres DB_CONNECTION_STRING="host=localhost port=5432 user=postgres password=secret dbname=authservice sslmode=disable" ./auth-service
+```
+
+The connection string format follows the standard PostgreSQL format.
+
+## Database Setup
+
+For SQLite, initialize the database schema:
+
+```bash
+go run migrations/db_migrate.go --db=./clients.db
+```
+
+For PostgreSQL, the schema will be automatically created on first run if it doesn't exist.
 
 ## Usage
 
@@ -113,4 +143,92 @@ kubectl apply -f k8s/nginx-ingress.yaml
 
 ## Client Management
 
-Clients are stored in a SQLite database and cached in memory for performance.
+Clients are stored in the configured database and cached in memory for performance.
+
+## Admin API
+
+The service provides an admin API for managing clients, protected by an API key that you specify.
+
+### Authentication
+
+All admin endpoints require the `X-Admin-API-Key` header to be set with the admin API key.
+
+```
+X-Admin-API-Key: your-admin-api-key
+```
+
+### Available Endpoints
+
+#### List All Clients
+
+```
+GET /admin/clients
+```
+
+Response:
+```json
+[
+  {
+    "id": "client1-uuid",
+    "org_id": "tenant1",
+    "allowed_actions": ["Query", "GetStatus"]
+  },
+  {
+    "id": "client2-uuid",
+    "org_id": "tenant2",
+    "allowed_actions": ["Ingest", "Query"]
+  }
+]
+```
+
+#### Create Client
+
+```
+POST /admin/clients
+Content-Type: application/json
+
+{
+  "id": "new-client-uuid",  // Optional, if not provided, one will be generated
+  "org_id": "tenant3",
+  "username": "client3",
+  "password": "secure-password",
+  "allowed_actions": ["Query", "GetStatus", "Ingest"]
+}
+```
+
+Response:
+```json
+{
+  "id": "new-client-uuid",
+  "org_id": "tenant3",
+  "allowed_actions": ["Query", "GetStatus", "Ingest"]
+}
+```
+
+#### Delete Client
+
+```
+DELETE /admin/clients/{client-id}
+```
+
+Response: 204 No Content
+
+### Configuration
+
+To enable the admin API, set the `ADMIN_API_KEY` environment variable:
+
+```bash
+ADMIN_API_KEY="your-secure-api-key" ./auth-service
+```
+
+In Kubernetes, use a secret:
+
+```yaml
+apiVersion: v1
+kind: Secret
+metadata:
+  name: auth-service-admin-key
+type: Opaque
+stringData:
+  admin_api_key: "your-secure-admin-api-key"
+```
