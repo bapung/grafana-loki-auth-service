@@ -4,36 +4,45 @@ import (
 	"database/sql"
 	"fmt"
 	"sync"
+
+	_ "github.com/lib/pq"
 )
+
+// DBProvider provides database operations for the client store
+type DBProvider interface {
+	Connect() error
+	Close() error
+	InitializeSchema() error
+	GetAllClients() ([]Client, error)
+	InsertOrUpdateClient(client Client) error
+	DeleteClientActions(clientID string) error
+	InsertClientAction(clientID, action string) error
+	BeginTx() (*sql.Tx, error)
+}
 
 // ClientStore holds all registered clients with database connectivity
 type ClientStore struct {
 	clientsByID    map[string]Client
 	clientsByOrgID map[string][]Client
-	db             *sql.DB
+	db             DBProvider
 	mu             sync.RWMutex
 }
 
 // NewClientStore creates a new client store with database connection
-func NewClientStore(dbPath string) (*ClientStore, error) {
-	db, err := sql.Open("sqlite3", dbPath)
-	if err != nil {
-		return nil, fmt.Errorf("failed to open database: %v", err)
-	}
-
-	if err := db.Ping(); err != nil {
+func NewClientStore(provider DBProvider) (*ClientStore, error) {
+	if err := provider.Connect(); err != nil {
 		return nil, fmt.Errorf("failed to connect to database: %v", err)
 	}
 
 	// Ensure tables exist
-	if err := initializeDatabase(db); err != nil {
+	if err := provider.InitializeSchema(); err != nil {
 		return nil, fmt.Errorf("failed to initialize database: %v", err)
 	}
 
 	cs := &ClientStore{
 		clientsByID:    make(map[string]Client),
 		clientsByOrgID: make(map[string][]Client),
-		db:             db,
+		db:             provider,
 	}
 
 	// Load clients from database into memory cache
@@ -42,29 +51,6 @@ func NewClientStore(dbPath string) (*ClientStore, error) {
 	}
 
 	return cs, nil
-}
-
-// initializeDatabase creates necessary tables if they don't exist
-func initializeDatabase(db *sql.DB) error {
-	_, err := db.Exec(`
-		CREATE TABLE IF NOT EXISTS clients (
-			id TEXT PRIMARY KEY,
-			org_id TEXT NOT NULL,
-			basic_auth_user_hash TEXT NOT NULL,
-			basic_auth_user_salt TEXT NOT NULL,
-			basic_auth_pass_hash TEXT NOT NULL,
-			basic_auth_pass_salt TEXT NOT NULL
-		);
-		
-		CREATE TABLE IF NOT EXISTS client_actions (
-			action_id INTEGER PRIMARY KEY AUTOINCREMENT,
-			client_id TEXT NOT NULL,
-			action_name TEXT NOT NULL,
-			FOREIGN KEY (client_id) REFERENCES clients(id),
-			UNIQUE(client_id, action_name)
-		);
-	`)
-	return err
 }
 
 // refreshCache loads all clients from the database into memory
@@ -76,53 +62,18 @@ func (cs *ClientStore) refreshCache() error {
 	cs.clientsByID = make(map[string]Client)
 	cs.clientsByOrgID = make(map[string][]Client)
 
-	// Query all clients
-	rows, err := cs.db.Query(`SELECT id, org_id, 
-							 basic_auth_user_hash, basic_auth_user_salt,
-							 basic_auth_pass_hash, basic_auth_pass_salt
-							 FROM clients`)
+	clients, err := cs.db.GetAllClients()
 	if err != nil {
 		return err
 	}
-	defer rows.Close()
 
-	// Process each client
-	for rows.Next() {
-		var client Client
-		if err := rows.Scan(
-			&client.ID,
-			&client.OrgID,
-			&client.BasicAuthUserHash,
-			&client.BasicAuthUserSalt,
-			&client.BasicAuthPassHash,
-			&client.BasicAuthPassSalt); err != nil {
-			return err
-		}
-
-		// Query allowed actions for this client
-		actionRows, err := cs.db.Query("SELECT action_name FROM client_actions WHERE client_id = ?", client.ID)
-		if err != nil {
-			return err
-		}
-		defer actionRows.Close()
-
-		// Load actions
-		var actions []string
-		for actionRows.Next() {
-			var action string
-			if err := actionRows.Scan(&action); err != nil {
-				return err
-			}
-			actions = append(actions, action)
-		}
-		client.AllowedActions = actions
-
-		// Add to cache
+	// Add to cache
+	for _, client := range clients {
 		cs.clientsByID[client.ID] = client
 		cs.clientsByOrgID[client.OrgID] = append(cs.clientsByOrgID[client.OrgID], client)
 	}
 
-	return rows.Err()
+	return nil
 }
 
 // RegisterClient adds a client to the store (both DB and cache)
@@ -134,7 +85,7 @@ func (cs *ClientStore) RegisterClient(client Client) error {
 	defer cs.mu.Unlock()
 
 	// Begin transaction
-	tx, err := cs.db.Begin()
+	tx, err := cs.db.BeginTx()
 	if err != nil {
 		return err
 	}
@@ -145,27 +96,18 @@ func (cs *ClientStore) RegisterClient(client Client) error {
 	}()
 
 	// Insert client
-	_, err = tx.Exec(`INSERT OR REPLACE INTO clients 
-					 (id, org_id, basic_auth_user_hash, basic_auth_user_salt,
-					 basic_auth_pass_hash, basic_auth_pass_salt) 
-					 VALUES (?, ?, ?, ?, ?, ?)`,
-		client.ID, client.OrgID,
-		client.BasicAuthUserHash, client.BasicAuthUserSalt,
-		client.BasicAuthPassHash, client.BasicAuthPassSalt)
-	if err != nil {
+	if err := cs.db.InsertOrUpdateClient(client); err != nil {
 		return err
 	}
 
 	// Delete existing actions
-	_, err = tx.Exec("DELETE FROM client_actions WHERE client_id = ?", client.ID)
-	if err != nil {
+	if err := cs.db.DeleteClientActions(client.ID); err != nil {
 		return err
 	}
 
 	// Insert actions
 	for _, action := range client.AllowedActions {
-		_, err = tx.Exec("INSERT INTO client_actions (client_id, action_name) VALUES (?, ?)", client.ID, action)
-		if err != nil {
+		if err := cs.db.InsertClientAction(client.ID, action); err != nil {
 			return err
 		}
 	}

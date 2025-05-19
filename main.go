@@ -6,6 +6,7 @@ import (
 	"os"
 	"strings"
 
+	_ "github.com/lib/pq"
 	_ "github.com/mattn/go-sqlite3"
 
 	"github.com/bapung/grafana-loki-auth-service/pkg/action"
@@ -15,10 +16,36 @@ import (
 )
 
 func main() {
-	// Get database path from environment or use default
-	dbPath := os.Getenv("DB_PATH")
-	if dbPath == "" {
-		dbPath = "./clients.db"
+	// Get database type from environment or use default
+	dbType := os.Getenv("DB_TYPE")
+	if dbType == "" {
+		dbType = "sqlite" // Default to SQLite
+	}
+
+	// Initialize database provider based on the selected type
+	var dbProvider client.DBProvider
+
+	switch strings.ToLower(dbType) {
+	case "sqlite":
+		// Get SQLite database path from environment or use default
+		dbPath := os.Getenv("DB_PATH")
+		if dbPath == "" {
+			dbPath = "./clients.db"
+		}
+		log.Printf("Using SQLite database at: %s", dbPath)
+		dbProvider = client.NewSQLiteProvider(dbPath)
+
+	case "postgres", "postgresql":
+		// Get PostgreSQL connection string from environment
+		connStr := os.Getenv("DB_CONNECTION_STRING")
+		if connStr == "" {
+			log.Fatalf("PostgreSQL connection string not provided. Set DB_CONNECTION_STRING environment variable.")
+		}
+		log.Printf("Using PostgreSQL database")
+		dbProvider = client.NewPostgresProvider(connStr)
+
+	default:
+		log.Fatalf("Unsupported database type: %s. Supported types: sqlite, postgres", dbType)
 	}
 
 	// Get Loki path prefix from environment variable
@@ -37,7 +64,7 @@ func main() {
 	}
 
 	// Initialize client store
-	clientStore, err := client.NewClientStore(dbPath)
+	clientStore, err := client.NewClientStore(dbProvider)
 	if err != nil {
 		log.Fatalf("Failed to initialize client store: %v", err)
 	}

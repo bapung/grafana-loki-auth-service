@@ -7,7 +7,7 @@ An auth service for Grafana Loki that validates client credentials and permissio
 - Basic authentication verification
 - API key (TODO: Bearer)
 - Client permission check: Query, Ingest, GetStatus, Delete
-- SQLite database storage with in-memory caching (TODO: support other db)
+- Multiple database support: SQLite (default) or PostgreSQL
 - API to manage users (TODO)
 
 ## Credential Storage
@@ -56,13 +56,42 @@ clients:
 
 Note: When using plaintext credentials in YAML, they will be hashed upon first load and stored securely in the database.
 
-## Database Setup
+## Database Configuration
 
-Initialize the database schema:
+This service supports two types of databases:
+
+### SQLite (Default)
+
+SQLite is used by default and requires minimal configuration:
 
 ```bash
-go run db_migrate.go --db=./clients.db
+# Default SQLite configuration
+./auth-service
+
+# Specify custom database path
+DB_PATH=/path/to/clients.db ./auth-service
 ```
+
+### PostgreSQL
+
+To use PostgreSQL instead of SQLite:
+
+```bash
+# Required environment variables for PostgreSQL
+DB_TYPE=postgres DB_CONNECTION_STRING="host=localhost port=5432 user=postgres password=secret dbname=authservice sslmode=disable" ./auth-service
+```
+
+The connection string format follows the standard PostgreSQL format.
+
+## Database Setup
+
+For SQLite, initialize the database schema:
+
+```bash
+go run migrations/db_migrate.go --db=./clients.db
+```
+
+For PostgreSQL, the schema will be automatically created on first run if it doesn't exist.
 
 ## Usage
 
@@ -113,4 +142,4 @@ kubectl apply -f k8s/nginx-ingress.yaml
 
 ## Client Management
 
-Clients are stored in a SQLite database and cached in memory for performance.
+Clients are stored in the configured database and cached in memory for performance.
